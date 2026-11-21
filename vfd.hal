@@ -1,0 +1,77 @@
+# Spindle output speed
+#net spindle-rpm-out vfdmod.spindle.rpm-out => pyvcp.rpm-out
+#net spindle-at-speed vfdmod.spindle.at-speed <= pyvcp.at-speed
+
+
+net spindle-forward  vfdmod.control.run-forward spindle.0.forward 
+net spindle-reverse  vfdmod.control.run-reverse spindle.0.reverse
+net spindle-speed-in   vfdmod.spindle.rpm-in  spindle.0.speed-out-abs 
+net spindle-speed-out  vfdmod.spindle.rpm-out spindle.0.speed-in qtpyvcp.spindle-encoder-rpm.in
+
+# Communication
+#net pyvcp-is-connected vfdmod.rs485.is-connected => pyvcp.is-connected
+#net pyvcp-error-count vfdmod.rs485.error-count => pyvcp.error-count
+#net pyvcp-last-error vfdmod.rs485.last-error => pyvcp.last-error
+
+# Status
+#net TargetFrequency             vfdmod.parameters.TargetFrequency             pyvcp.TargetFrequency
+net OutputCurent                vfdmod.parameters.OutputCurent                qtpyvcp.spindle-load-indicator.in-f
+#net OutputVoltage               vfdmod.parameters.OutputVoltage               pyvcp.OutputVoltage
+#net MainLineVoltage             vfdmod.parameters.MainLineVoltage             pyvcp.MainLineVoltage
+#net CurrentAccelerationTime     vfdmod.parameters.CurrentAccelerationTime     pyvcp.CurrentAccelerationTime
+#net CurrentDeAccelerationTime   vfdmod.parameters.CurrentDeAccelerationTime   pyvcp.CurrentDeAccelerationTime
+
+# User parameters
+#net P00.00  vfdmod.parameters.P00.00 pyvcp.P00.00
+#net P00.01  vfdmod.parameters.P00.01 pyvcp.P00.01
+#net P00.24  vfdmod.parameters.P00.24 pyvcp.P00.24
+#net P06.00  vfdmod.parameters.P06.00 pyvcp.P06.00
+#net P06.01  vfdmod.parameters.P06.01 pyvcp.P06.01
+#net P06.02  vfdmod.parameters.P06.02 pyvcp.P06.02
+#net P11.00  vfdmod.parameters.P11.00 pyvcp.P11.00
+#net P11.01  vfdmod.parameters.P11.01 pyvcp.P11.01
+#net P11.02  vfdmod.parameters.P11.02 pyvcp.P11.02
+#net P11.03  vfdmod.parameters.P11.03 pyvcp.P11.03
+#net P11.04  vfdmod.parameters.P11.04 pyvcp.P11.04
+
+#Все что ниже - естоп если частотник упал в ошибку
+# 1. Загружаем нужные компоненты
+# Если loadrt and2 или loadrt not уже есть — увеличьте их count
+loadrt comp count=1
+loadrt and2 count=1
+# loadrt not count=2  # предполагаем, что not.0 уже занят, используем not.1
+
+# 2. Добавляем в поток
+addf comp.0 servo-thread
+addf and2.0 servo-thread
+addf not.1 servo-thread
+
+
+# 3. Логика сравнения кода ошибки частотника
+setp comp.0.in0 0.1  # сравниваю не с 0 потому что при сравнении с 0 компаратор зависает из за равенства значений, а ему нужен порог переключения
+net vfd-error-code vfdmod.parameters.ErrorSpindle => comp.0.in1
+
+# 4. Превращаем "есть ошибка" в "VFD исправен" (инвертируем)
+net vfd-is-bad comp.0.out => not.1.in
+net vfd-is-ok not.1.out => and2.0.in0
+
+# 5. Перехватываем старый сигнал estop-ext и заводим его во второй вход "И"
+# Сначала нужно найти в файле строку "net estop-ext iocontrol.0.emc-enable-in"
+# и УДАЛИТЬ ИЛИ ЗАКОММЕНТИРОВАТЬ ЕЁ.
+# Вместо неё пишем:
+net estop-ext => and2.0.in1
+
+# 6. Общий выход "И" теперь управляет остановкой станка
+net total-estop-ok and2.0.out => iocontrol.0.emc-enable-in
+
+
+#сообщение об ошибке частотника
+
+loadrt message names=errorvfd messages="VFD ERROR"
+addf errorvfd servo-thread
+setp errorvfd.edge 1
+
+net vfd-is-bad => errorvfd.trigger
+
+
+

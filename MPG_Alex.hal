@@ -1,0 +1,76 @@
+# 1. Загрузка драйвера джойстика и Python-компонента переключения шага
+# (Замените "Arduino" на уникальное слово из имени вашего устройства в /proc/bus/input/devices)
+loadusr -W hal_input -KRAL Arduino
+loadusr -W ./mpg_joy.py
+
+# 2. Загрузка RT-компонентов (счётчик MPG, сглаживание стика и масштаб скорости)
+loadrt updown names=mpg_rt_cnt
+loadrt joyhandle count=2
+loadrt scale names=joy_speed_scale
+
+addf mpg_rt_cnt servo-thread
+addf joyhandle.0 servo-thread
+addf joyhandle.1 servo-thread
+addf joy_speed_scale servo-thread
+
+# 3. Настройка сглаживания аналогового стика X/Y
+setp joyhandle.0.deadband 0.1
+setp joyhandle.0.power 2.0
+setp joyhandle.0.scale 1.0
+
+setp joyhandle.1.deadband 0.1
+setp joyhandle.1.power 2.0
+setp joyhandle.1.scale -1.0
+
+# 4. Переключение шага (1 -> 0.1 -> 0.01) кнопкой Step
+net btn-step mpg_joy.btn-step <= input.0.btn-c
+
+# 5. Настройка MPG-энкодера (работает и до Homed, и после Homed)
+setp axis.x.jog-vel-mode 1
+setp axis.y.jog-vel-mode 1
+setp axis.z.jog-vel-mode 1
+setp joint.0.jog-vel-mode 1
+setp joint.1.jog-vel-mode 1
+setp joint.2.jog-vel-mode 1
+
+# Импульсы + и - от Arduino в RT-счётчик
+net mpg-a mpg_rt_cnt.countup   <= input.0.btn-tr
+net mpg-b mpg_rt_cnt.countdown <= input.0.btn-tl2
+
+# Передача шага и счётчика на оси и суставы
+net mpg-scale  mpg_joy.step-out => axis.x.jog-scale axis.y.jog-scale axis.z.jog-scale joint.0.jog-scale joint.1.jog-scale joint.2.jog-scale
+net mpg-counts mpg_rt_cnt.count => axis.x.jog-counts axis.y.jog-counts axis.z.jog-counts joint.0.jog-counts joint.1.jog-counts joint.2.jog-counts
+
+# Кнопки выбора оси X, Y, Z
+net btn-xsig axis.x.jog-enable joint.0.jog-enable <= input.0.btn-y
+net btn-ysig axis.y.jog-enable joint.1.jog-enable <= input.0.btn-z
+net btn-zsel axis.z.jog-enable joint.2.jog-enable <= input.0.btn-tl
+
+# 6. Управление скоростью джойстика со слайдера Feed Override Probe Basic
+# (3000.0 = максимальная скорость при 100% на слайдере)
+setp joy_speed_scale.gain 3000.0
+net feed-override-val joy_speed_scale.in <= halui.feed-override.value
+net jog-speed <= joy_speed_scale.out
+net jog-speed => halui.joint.jog-speed
+
+# 7. Непрерывные перемещения (стик X/Y и кнопки Z+/Z-)
+unlinkp halui.axis.x.analog
+unlinkp halui.axis.y.analog
+unlinkp halui.joint.0.analog
+unlinkp halui.joint.1.analog
+unlinkp halui.axis.z.plus
+unlinkp halui.axis.z.minus
+unlinkp halui.joint.2.plus
+unlinkp halui.joint.2.minus
+
+net joy-x-raw joyhandle.0.in <= input.0.abs-x-position
+net joy-y-raw joyhandle.1.in <= input.0.abs-y-position
+net joy-x     halui.axis.x.analog halui.joint.0.analog <= joyhandle.0.out
+net joy-y     halui.axis.y.analog halui.joint.1.analog <= joyhandle.1.out
+
+net btn-zplus  halui.axis.z.plus  halui.joint.2.plus  <= input.0.btn-a
+net btn-zminus halui.axis.z.minus halui.joint.2.minus <= input.0.btn-x
+
+# 8. Кнопка E-Stop (аварийный стоп)
+unlinkp halui.estop.activate
+net btn-estop halui.estop.activate <= input.0.btn-b
